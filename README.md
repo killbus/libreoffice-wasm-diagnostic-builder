@@ -41,6 +41,9 @@ names are configured by the owning GitHub organization.
 
 ## Outputs
 
+The build emits ES6 glue as `soffice.mjs` (and optionally `soffice.worker.mjs`).
+The collect step renames those into the published artifact names below.
+
 A successful run uploads a seven-day artifact containing:
 
 ```text

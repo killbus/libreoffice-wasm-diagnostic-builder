@@ -179,21 +179,26 @@ log "LibreOffice build completed"
 rm -f -- "$OUTPUT_DIR"/soffice.wasm "$OUTPUT_DIR"/soffice.data "$OUTPUT_DIR"/soffice.js "$OUTPUT_DIR"/soffice.cjs "$OUTPUT_DIR"/soffice.worker.js "$OUTPUT_DIR"/soffice.worker.cjs "$OUTPUT_DIR"/SHA256SUMS "$OUTPUT_DIR"/BUILD-METADATA.txt
 mkdir -p "$OUTPUT_DIR"
 PROGRAM_DIR="$LO_DIR/instdir/program"
-for required in soffice.wasm soffice.data soffice.js; do
+# wasm-build-fixes.patch emits ES6 glue as soffice.mjs (EXPORT_ES6=1).
+for required in soffice.wasm soffice.data soffice.mjs; do
   if [ ! -s "$PROGRAM_DIR/$required" ]; then
     echo "Missing build output: $PROGRAM_DIR/$required" >&2
+    ls -la "$PROGRAM_DIR"/soffice* 2>/dev/null || true
     exit 1
   fi
 done
 
 cp "$PROGRAM_DIR/soffice.wasm" "$OUTPUT_DIR/soffice.wasm"
 cp "$PROGRAM_DIR/soffice.data" "$OUTPUT_DIR/soffice.data"
-cp "$PROGRAM_DIR/soffice.js" "$OUTPUT_DIR/soffice.cjs"
-if [ -s "$PROGRAM_DIR/soffice.worker.js" ]; then
+cp "$PROGRAM_DIR/soffice.mjs" "$OUTPUT_DIR/soffice.cjs"
+if [ -s "$PROGRAM_DIR/soffice.worker.mjs" ]; then
+  cp "$PROGRAM_DIR/soffice.worker.mjs" "$OUTPUT_DIR/soffice.worker.cjs"
+elif [ -s "$PROGRAM_DIR/soffice.worker.js" ]; then
   cp "$PROGRAM_DIR/soffice.worker.js" "$OUTPUT_DIR/soffice.worker.cjs"
 fi
 
 pushd "$OUTPUT_DIR" >/dev/null
+# Best-effort for non-ES6 glue; EXPORT_ES6 output may not use global.Module.
 if ! head -c 80 soffice.cjs | grep -q 'global.Module'; then
   sed -i '1s/^/if(typeof global!=="undefined"){var Module=global.Module=global.Module||{}}\n/' soffice.cjs
 fi
