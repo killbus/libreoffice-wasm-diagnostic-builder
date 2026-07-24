@@ -2,8 +2,8 @@
 
 An isolated, reproducible GitHub Actions project for compiling one diagnostic
 LibreOffice WASM runtime. It exists only to locate the native boundary of the
-browser `documentSaveAs` hang; it is not a production LibreOffice fork or a
-runtime distribution repository.
+browser `documentLoad` / `documentSaveAs` hang; it is not a production
+LibreOffice fork or a runtime distribution repository.
 
 ## Pinned inputs
 
@@ -11,7 +11,8 @@ runtime distribution repository.
 - LibreOffice commit: `d1c9e0e4e1ddeb24fe8f93e56860b3765043f8b1`
 - Emscripten SDK: `3.1.74`
 - WASM compatibility patch: `patches/wasm-build-fixes.patch`
-- Native trace patch: `patches/libreoffice-24-8-saveas-native-markers.patch`
+- Native save/export trace patch: `patches/libreoffice-24-8-saveas-native-markers.patch`
+- Native document-load trace patch: `patches/libreoffice-24-8-document-load-native-markers.patch`
 
 `build.env` records SHA-256 values for every local build input. The build fails
 before cloning or compiling if one of those files has changed unexpectedly.
@@ -61,8 +62,8 @@ Logs are uploaded separately for fourteen days even when configure or make
 fails. They include `build.log`, `config.log`, source revision, ccache stats,
 and runner disk usage when available.
 
-The build verifies that the final `soffice.wasm` contains the
-`LOK_SAVEAS_TRACE` marker string before publishing it.
+The build verifies that the final `soffice.wasm` contains both
+`LOK_SAVEAS_TRACE` and `LOK_LOAD_TRACE` marker strings before publishing it.
 
 ## Cache policy
 
@@ -84,11 +85,14 @@ Run exactly one known-hanging DOCX and collect Worker console lines containing:
 
 ```text
 [LOK_SAVEAS_TRACE]
+[LOK_LOAD_TRACE]
 ```
 
 The first boundary with an `entry` and no matching `exit` identifies the native
-hang scope. If every native boundary returns, move investigation to generated
-WASM glue or Worker scheduling.
+hang scope. The load markers cover `SolarMutexGuard`, `frame::Desktop::create`,
+`loadComponentFromURL`, and `LibLODocument_Impl` before save/export begins. If
+every native boundary returns, move investigation to generated WASM glue or
+Worker scheduling.
 
 No document fixtures, proprietary fonts, or production WASM binaries belong in
 this repository.

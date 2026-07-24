@@ -85,6 +85,7 @@ df -h "$PROJECT_DIR" "$WORK_ROOT" || true
 verify_sha256 "$PROJECT_DIR/autogen.input" "$AUTOGEN_INPUT_SHA256"
 verify_sha256 "$PROJECT_DIR/patches/wasm-build-fixes.patch" "$WASM_BUILD_FIXES_SHA256"
 verify_sha256 "$PROJECT_DIR/patches/libreoffice-24-8-saveas-native-markers.patch" "$NATIVE_MARKERS_SHA256"
+verify_sha256 "$PROJECT_DIR/patches/libreoffice-24-8-document-load-native-markers.patch" "$LOAD_MARKERS_SHA256"
 log "verified pinned build inputs"
 
 if [ ! -d "$EMSDK_DIR/.git" ]; then
@@ -126,8 +127,14 @@ log "applying WASM build fixes"
 patch --batch --forward -p1 < "$PROJECT_DIR/patches/wasm-build-fixes.patch"
 log "applying native save/export markers"
 patch --batch --forward -p1 < "$PROJECT_DIR/patches/libreoffice-24-8-saveas-native-markers.patch"
+log "applying native document-load markers"
+patch --batch --forward -p1 < "$PROJECT_DIR/patches/libreoffice-24-8-document-load-native-markers.patch"
 if ! grep -q 'LOK_SAVEAS_TRACE' include/vcl/lokwasmsaveasdiagnostic.hxx; then
-  echo "Native marker verification failed" >&2
+  echo "Native save/export marker verification failed" >&2
+  exit 1
+fi
+if ! grep -q 'LOK_LOAD_TRACE' include/vcl/lokwasmdocumentloaddiagnostic.hxx; then
+  echo "Native document-load marker verification failed" >&2
   exit 1
 fi
 
@@ -212,10 +219,16 @@ if ! grep -a -q 'LOK_SAVEAS_TRACE' soffice.wasm; then
   echo "Built WASM does not contain LOK_SAVEAS_TRACE" >&2
   exit 1
 fi
+if ! grep -a -q 'LOK_LOAD_TRACE' soffice.wasm; then
+  echo "Built WASM does not contain LOK_LOAD_TRACE" >&2
+  exit 1
+fi
 sha256sum soffice.* > SHA256SUMS
 {
   printf 'libreoffice_commit=%s\n' "$LIBREOFFICE_COMMIT"
   printf 'emsdk_version=%s\n' "$EMSDK_VERSION"
+  printf 'saveas_markers_sha256=%s\n' "$NATIVE_MARKERS_SHA256"
+  printf 'load_markers_sha256=%s\n' "$LOAD_MARKERS_SHA256"
   printf 'build_jobs=%s\n' "$BUILD_JOBS_EFFECTIVE"
   printf 'built_at=%s\n' "$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
 } > BUILD-METADATA.txt
