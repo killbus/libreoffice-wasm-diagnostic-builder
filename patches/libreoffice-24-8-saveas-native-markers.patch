@@ -1,0 +1,230 @@
+diff --git a/include/vcl/lokwasmsaveasdiagnostic.hxx b/include/vcl/lokwasmsaveasdiagnostic.hxx
+new file mode 100644
+index 000000000000..24cd0e88cc68
+--- /dev/null
++++ b/include/vcl/lokwasmsaveasdiagnostic.hxx
+@@ -0,0 +1,58 @@
++/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
++/*
++ * Diagnostic-only instrumentation for the browser-WASM save/export pipeline.
++ * Do not include document content, URLs, filenames, filter options, or UNO data.
++ */
++
++#ifndef INCLUDED_VCL_LOKWASMSAVEASDIAGNOSTIC_HXX
++#define INCLUDED_VCL_LOKWASMSAVEASDIAGNOSTIC_HXX
++
++#include <chrono>
++#include <cstdio>
++
++namespace vcl::lok
++{
++class WasmSaveAsDiagnosticScope final
++{
++public:
++    WasmSaveAsDiagnosticScope(const char* pBoundary, const void* pObject,
++                              long long nPage = -1) noexcept
++        : mpBoundary(pBoundary)
++        , mpObject(pObject)
++        , mnPage(nPage)
++    {
++        emit("entry");
++    }
++
++    ~WasmSaveAsDiagnosticScope() noexcept { emit("exit"); }
++
++    WasmSaveAsDiagnosticScope(const WasmSaveAsDiagnosticScope&) = delete;
++    WasmSaveAsDiagnosticScope& operator=(const WasmSaveAsDiagnosticScope&) = delete;
++
++private:
++    void emit(const char* pEvent) const noexcept
++    {
++#if defined(__EMSCRIPTEN__)
++        using Clock = std::chrono::steady_clock;
++        const auto nSteadyUs = std::chrono::duration_cast<std::chrono::microseconds>(
++                                   Clock::now().time_since_epoch())
++                                   .count();
++        std::fprintf(stderr,
++                     "[LOK_SAVEAS_TRACE] steady_us=%lld boundary=%s event=%s object=%p page=%lld\n",
++                     static_cast<long long>(nSteadyUs), mpBoundary, pEvent,
++                     const_cast<void*>(mpObject), mnPage);
++        std::fflush(stderr);
++#else
++        (void)pEvent;
++#endif
++    }
++
++    const char* mpBoundary;
++    const void* mpObject;
++    long long mnPage;
++};
++}
++
++#endif
++
++/* vim:set shiftwidth=4 softtabstop=4 expandtab: */
+diff --git a/desktop/source/lib/init.cxx b/desktop/source/lib/init.cxx
+index 46bf9f5e3209..111111111111 100644
+--- a/desktop/source/lib/init.cxx
++++ b/desktop/source/lib/init.cxx
+@@ -65,6 +65,7 @@
+ #include <utility>
+ #include <vcl/errinf.hxx>
+ #include <vcl/lok.hxx>
++#include <vcl/lokwasmsaveasdiagnostic.hxx>
+ #include <o3tl/any.hxx>
+ #include <o3tl/unit_conversion.hxx>
+ #include <o3tl/string_view.hxx>
+@@ -3394,5 +3395,7 @@ static void doc_setViewOption(LibreOfficeKitDocument* pThis, const char* pOption
+ static int doc_saveAs(LibreOfficeKitDocument* pThis, const char* sUrl, const char* pFormat, const char* pFilterOptions)
+ {
++    vcl::lok::WasmSaveAsDiagnosticScope aSaveAsDiagnosticScope("doc_saveAs", pThis);
++
+     comphelper::ProfileZone aZone("doc_saveAs");
+ 
+     SolarMutexGuard aGuard;
+diff --git a/sfx2/source/doc/sfxbasemodel.cxx b/sfx2/source/doc/sfxbasemodel.cxx
+index a4a3c87d4c2e..222222222222 100644
+--- a/sfx2/source/doc/sfxbasemodel.cxx
++++ b/sfx2/source/doc/sfxbasemodel.cxx
+@@ -19,5 +19,6 @@
+ 
+ #include <sal/config.h>
++#include <vcl/lokwasmsaveasdiagnostic.hxx>
+ 
+ #include <algorithm>
+ #include <chrono>
+@@ -1794,6 +1795,9 @@ void SAL_CALL SfxBaseModel::storeAsURL( const   OUString&                   rURL
+ void SAL_CALL SfxBaseModel::storeToURL( const   OUString&                   rURL    ,
+                                         const   Sequence< beans::PropertyValue >&  rArgs   )
+ {
++    vcl::lok::WasmSaveAsDiagnosticScope aSaveAsDiagnosticScope(
++        "SfxBaseModel::storeToURL", this);
++
+     SfxModelGuard aGuard( *this );
+     comphelper::ProfileZone aZone("storeToURL");
+ 
+diff --git a/sfx2/source/doc/objstor.cxx b/sfx2/source/doc/objstor.cxx
+index ec040771021f..333333333333 100644
+--- a/sfx2/source/doc/objstor.cxx
++++ b/sfx2/source/doc/objstor.cxx
+@@ -20,6 +20,7 @@
+ #include <config_features.h>
+ 
+ #include <sal/config.h>
++#include <vcl/lokwasmsaveasdiagnostic.hxx>
+ #include <sal/log.hxx>
+ 
+ #include <cassert>
+@@ -2484,6 +2485,9 @@ bool SfxObjectShell::ImportFrom(SfxMedium& rMedium, css::uno::Reference<css::tex
+ 
+ bool SfxObjectShell::ExportTo( SfxMedium& rMedium )
+ {
++    vcl::lok::WasmSaveAsDiagnosticScope aSaveAsDiagnosticScope(
++        "SfxObjectShell::ExportTo", this);
++
+     const OUString aFilterName( rMedium.GetFilter()->GetFilterName() );
+     uno::Reference< document::XExporter > xExporter;
+ 
+diff --git a/filter/source/pdf/pdffilter.cxx b/filter/source/pdf/pdffilter.cxx
+index 3aa2fc2366df..444444444444 100644
+--- a/filter/source/pdf/pdffilter.cxx
++++ b/filter/source/pdf/pdffilter.cxx
+@@ -19,6 +19,7 @@
+ 
+ #include "pdffilter.hxx"
+ #include "pdfexport.hxx"
++#include <vcl/lokwasmsaveasdiagnostic.hxx>
+ #include <cppuhelper/supportsservice.hxx>
+ #include <vcl/svapp.hxx>
+ #include <vcl/window.hxx>
+@@ -51,6 +52,9 @@ PDFFilter::~PDFFilter()
+ 
+ bool PDFFilter::implExport( const Sequence< PropertyValue >& rDescriptor )
+ {
++    vcl::lok::WasmSaveAsDiagnosticScope aSaveAsDiagnosticScope(
++        "PDFFilter::implExport", this);
++
+     Reference< XOutputStream >  xOStm;
+     Sequence< PropertyValue >   aFilterData;
+     OUString aFilterOptions;
+diff --git a/filter/source/pdf/pdfexport.cxx b/filter/source/pdf/pdfexport.cxx
+index ecb6370cb3a1..555555555555 100644
+--- a/filter/source/pdf/pdfexport.cxx
++++ b/filter/source/pdf/pdfexport.cxx
+@@ -21,3 +21,4 @@
++#include <vcl/lokwasmsaveasdiagnostic.hxx>
+ #include <osl/file.hxx>
+ #include <tools/debug.hxx>
+ #include <tools/urlobj.hxx>
+@@ -380,6 +381,9 @@ PDFExport::~PDFExport()
+ 
+ bool PDFExport::Export( const OUString& rFile, const Sequence< PropertyValue >& rFilterData )
+ {
++    vcl::lok::WasmSaveAsDiagnosticScope aSaveAsDiagnosticScope(
++        "PDFExport::Export", this);
++
+     INetURLObject   aURL( rFile );
+     bool        bRet = false;
+ 
+diff --git a/sw/source/uibase/uno/unotxdoc.cxx b/sw/source/uibase/uno/unotxdoc.cxx
+index 03256afabcf4..666666666666 100644
+--- a/sw/source/uibase/uno/unotxdoc.cxx
++++ b/sw/source/uibase/uno/unotxdoc.cxx
+@@ -18,6 +18,7 @@
+  */
+ 
+ #include <sal/config.h>
++#include <vcl/lokwasmsaveasdiagnostic.hxx>
+ #include <officecfg/Office/Common.hxx>
+ #include <comphelper/dispatchcommand.hxx>
+ #include <comphelper/propertysequence.hxx>
+@@ -2557,6 +2558,9 @@ sal_Int32 SAL_CALL SwXTextDocument::getRendererCount(
+         const uno::Any& rSelection,
+         const uno::Sequence< beans::PropertyValue >& rxOptions )
+ {
++    vcl::lok::WasmSaveAsDiagnosticScope aSaveAsDiagnosticScope(
++        "SwXTextDocument::getRendererCount", this);
++
+     SolarMutexGuard aGuard;
+     ThrowIfInvalid();
+ 
+diff --git a/sw/source/core/view/vprint.cxx b/sw/source/core/view/vprint.cxx
+index ba32d34ca287..777777777777 100644
+--- a/sw/source/core/view/vprint.cxx
++++ b/sw/source/core/view/vprint.cxx
+@@ -21,3 +21,4 @@
++#include <vcl/lokwasmsaveasdiagnostic.hxx>
+ #include <hintids.hxx>
+ #include <sfx2/printer.hxx>
+ #include <svx/svdview.hxx>
+@@ -446,6 +447,9 @@ bool SwViewShell::PrintOrPDFExport(
+     sal_Int32 nRenderer,     /* the index in the vector of pages to be printed */
+     bool bIsPDFExport )
+ {
++    vcl::lok::WasmSaveAsDiagnosticScope aSaveAsDiagnosticScope(
++        "SwViewShell::PrintOrPDFExport", this, nRenderer);
++
+     // CAUTION: Do also always update the printing routines in viewpg.cxx (PrintProspect)!
+ 
+     const sal_Int32 nMaxRenderer = rPrintData.GetRenderData().GetPagesToPrint().size() - 1;
+diff --git a/vcl/source/gdi/pdfwriter.cxx b/vcl/source/gdi/pdfwriter.cxx
+index 01dbd23aad36..888888888888 100644
+--- a/vcl/source/gdi/pdfwriter.cxx
++++ b/vcl/source/gdi/pdfwriter.cxx
+@@ -18,6 +18,7 @@
+  */
+ 
+ #include <vcl/bitmapex.hxx>
++#include <vcl/lokwasmsaveasdiagnostic.hxx>
+ 
+ #include <pdf/pdfwriter_impl.hxx>
+ 
+@@ -49,6 +50,8 @@ PDFWriter::~PDFWriter()
+ 
+ bool PDFWriter::Emit()
+ {
++    vcl::lok::WasmSaveAsDiagnosticScope aSaveAsDiagnosticScope("PDFWriter::Emit", this);
++
+     return xImplementation->emit();
+ }
+ 

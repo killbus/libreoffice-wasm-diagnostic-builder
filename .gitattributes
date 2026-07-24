@@ -1,0 +1,9 @@
+* text=auto
+.gitattributes text eol=lf
+.gitignore text eol=lf
+*.sh text eol=lf
+*.yml text eol=lf
+*.md text eol=lf
+build.env text eol=lf
+autogen.input -text
+*.patch -text
