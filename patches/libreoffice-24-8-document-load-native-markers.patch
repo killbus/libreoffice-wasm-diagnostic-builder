@@ -72,9 +72,9 @@ diff --git a/desktop/source/lib/init.cxx b/desktop/source/lib/init.cxx
  #include <vcl/errinf.hxx>
  #include <vcl/lok.hxx>
 +#include <vcl/lokwasmdocumentloaddiagnostic.hxx>
- #include <vcl/lokwasmsaveasdiagnostic.hxx>
  #include <o3tl/any.hxx>
  #include <o3tl/unit_conversion.hxx>
+ #include <o3tl/string_view.hxx>
 @@ -2651,9 +2652,13 @@
  
  static LibreOfficeKitDocument* lo_documentLoadWithOptions(LibreOfficeKit* pThis, const char* pURL, const char* pOptions)
