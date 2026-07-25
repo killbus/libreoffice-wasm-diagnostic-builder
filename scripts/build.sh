@@ -6,6 +6,15 @@ PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck disable=SC1091
 source "$PROJECT_DIR/build.env"
 
+if [ "$DIAGNOSTIC_GLUE_MODE" != "package-classic" ]; then
+  echo "This diagnostic build must use package-classic glue: $DIAGNOSTIC_GLUE_MODE" >&2
+  exit 2
+fi
+if [ "$DIAGNOSTIC_MARKER_SET" != "load-only" ]; then
+  echo "This diagnostic build must use load-only markers: $DIAGNOSTIC_MARKER_SET" >&2
+  exit 2
+fi
+
 BUILD_JOBS_REQUESTED="${BUILD_JOBS:-4}"
 if [[ ! "$BUILD_JOBS_REQUESTED" =~ ^[1-9][0-9]*$ ]]; then
   echo "BUILD_JOBS must be a positive integer: $BUILD_JOBS_REQUESTED" >&2
@@ -78,13 +87,15 @@ log "project=$PROJECT_DIR"
 log "work_root=$WORK_ROOT"
 log "libreoffice_commit=$LIBREOFFICE_COMMIT"
 log "emsdk_version=$EMSDK_VERSION"
+log "diagnostic_glue_mode=$DIAGNOSTIC_GLUE_MODE"
+log "diagnostic_marker_set=$DIAGNOSTIC_MARKER_SET"
 log "build_jobs=requested:$BUILD_JOBS_REQUESTED effective:$BUILD_JOBS_EFFECTIVE"
 free -h || true
 df -h "$PROJECT_DIR" "$WORK_ROOT" || true
 
 verify_sha256 "$PROJECT_DIR/autogen.input" "$AUTOGEN_INPUT_SHA256"
 verify_sha256 "$PROJECT_DIR/patches/wasm-build-fixes.patch" "$WASM_BUILD_FIXES_SHA256"
-verify_sha256 "$PROJECT_DIR/patches/libreoffice-24-8-saveas-native-markers.patch" "$NATIVE_MARKERS_SHA256"
+verify_sha256 "$PROJECT_DIR/patches/package-classic-glue.patch" "$PACKAGE_CLASSIC_GLUE_SHA256"
 verify_sha256 "$PROJECT_DIR/patches/libreoffice-24-8-document-load-native-markers.patch" "$LOAD_MARKERS_SHA256"
 log "verified pinned build inputs"
 
@@ -125,16 +136,16 @@ printf '%s\n' "$actual_commit" > "$LOG_DIR/source-revision.txt"
 pushd "$LO_DIR" >/dev/null
 log "applying WASM build fixes"
 patch --batch --forward -p1 < "$PROJECT_DIR/patches/wasm-build-fixes.patch"
-log "applying native save/export markers"
-patch --batch --forward -p1 < "$PROJECT_DIR/patches/libreoffice-24-8-saveas-native-markers.patch"
+log "restoring package-classic importScripts glue"
+patch --batch --forward -p1 < "$PROJECT_DIR/patches/package-classic-glue.patch"
 log "applying native document-load markers"
 patch --batch --forward -p1 < "$PROJECT_DIR/patches/libreoffice-24-8-document-load-native-markers.patch"
-if ! grep -q 'LOK_SAVEAS_TRACE' include/vcl/lokwasmsaveasdiagnostic.hxx; then
-  echo "Native save/export marker verification failed" >&2
-  exit 1
-fi
 if ! grep -q 'LOK_LOAD_TRACE' include/vcl/lokwasmdocumentloaddiagnostic.hxx; then
   echo "Native document-load marker verification failed" >&2
+  exit 1
+fi
+if [ -e include/vcl/lokwasmsaveasdiagnostic.hxx ]; then
+  echo "Unexpected native save/export marker header in load-only source" >&2
   exit 1
 fi
 
@@ -186,8 +197,8 @@ log "LibreOffice build completed"
 rm -f -- "$OUTPUT_DIR"/soffice.wasm "$OUTPUT_DIR"/soffice.data "$OUTPUT_DIR"/soffice.js "$OUTPUT_DIR"/soffice.cjs "$OUTPUT_DIR"/soffice.worker.js "$OUTPUT_DIR"/soffice.worker.cjs "$OUTPUT_DIR"/SHA256SUMS "$OUTPUT_DIR"/BUILD-METADATA.txt
 mkdir -p "$OUTPUT_DIR"
 PROGRAM_DIR="$LO_DIR/instdir/program"
-# wasm-build-fixes.patch emits ES6 glue as soffice.mjs (EXPORT_ES6=1).
-for required in soffice.wasm soffice.data soffice.mjs; do
+# package-classic-glue.patch restores the importScripts-compatible soffice.js.
+for required in soffice.wasm soffice.data soffice.js; do
   if [ ! -s "$PROGRAM_DIR/$required" ]; then
     echo "Missing build output: $PROGRAM_DIR/$required" >&2
     ls -la "$PROGRAM_DIR"/soffice* 2>/dev/null || true
@@ -197,15 +208,13 @@ done
 
 cp "$PROGRAM_DIR/soffice.wasm" "$OUTPUT_DIR/soffice.wasm"
 cp "$PROGRAM_DIR/soffice.data" "$OUTPUT_DIR/soffice.data"
-cp "$PROGRAM_DIR/soffice.mjs" "$OUTPUT_DIR/soffice.cjs"
-if [ -s "$PROGRAM_DIR/soffice.worker.mjs" ]; then
-  cp "$PROGRAM_DIR/soffice.worker.mjs" "$OUTPUT_DIR/soffice.worker.cjs"
-elif [ -s "$PROGRAM_DIR/soffice.worker.js" ]; then
+cp "$PROGRAM_DIR/soffice.js" "$OUTPUT_DIR/soffice.cjs"
+if [ -s "$PROGRAM_DIR/soffice.worker.js" ]; then
   cp "$PROGRAM_DIR/soffice.worker.js" "$OUTPUT_DIR/soffice.worker.cjs"
 fi
 
 pushd "$OUTPUT_DIR" >/dev/null
-# Best-effort for non-ES6 glue; EXPORT_ES6 output may not use global.Module.
+# Match the package's browser/Node copies while preserving classic Module use.
 if ! head -c 80 soffice.cjs | grep -q 'global.Module'; then
   sed -i '1s/^/if(typeof global!=="undefined"){var Module=global.Module=global.Module||{}}\n/' soffice.cjs
 fi
@@ -215,19 +224,25 @@ sed -i 's|datafile_[^"]*emscripten_fs_image/soffice\.data|datafile_soffice.data|
 cp soffice.cjs soffice.js
 if [ -f soffice.worker.cjs ]; then cp soffice.worker.cjs soffice.worker.js; fi
 
-if ! grep -a -q 'LOK_SAVEAS_TRACE' soffice.wasm; then
-  echo "Built WASM does not contain LOK_SAVEAS_TRACE" >&2
+if grep -q 'export default' soffice.js; then
+  echo "Built glue is ES6, not package-classic importScripts glue" >&2
   exit 1
 fi
 if ! grep -a -q 'LOK_LOAD_TRACE' soffice.wasm; then
   echo "Built WASM does not contain LOK_LOAD_TRACE" >&2
   exit 1
 fi
+if grep -a -q 'LOK_SAVEAS_TRACE' soffice.wasm; then
+  echo "Built WASM unexpectedly contains LOK_SAVEAS_TRACE in load-only mode" >&2
+  exit 1
+fi
 sha256sum soffice.* > SHA256SUMS
 {
   printf 'libreoffice_commit=%s\n' "$LIBREOFFICE_COMMIT"
   printf 'emsdk_version=%s\n' "$EMSDK_VERSION"
-  printf 'saveas_markers_sha256=%s\n' "$NATIVE_MARKERS_SHA256"
+  printf 'diagnostic_glue_mode=%s\n' "$DIAGNOSTIC_GLUE_MODE"
+  printf 'diagnostic_marker_set=%s\n' "$DIAGNOSTIC_MARKER_SET"
+  printf 'package_classic_glue_sha256=%s\n' "$PACKAGE_CLASSIC_GLUE_SHA256"
   printf 'load_markers_sha256=%s\n' "$LOAD_MARKERS_SHA256"
   printf 'build_jobs=%s\n' "$BUILD_JOBS_EFFECTIVE"
   printf 'built_at=%s\n' "$(date -u +'%Y-%m-%dT%H:%M:%SZ')"

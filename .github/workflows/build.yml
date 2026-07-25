@@ -23,7 +23,7 @@ concurrency:
 
 jobs:
   build:
-    name: LibreOffice WASM native-marker build
+    name: LibreOffice WASM package-classic load-marker build
     runs-on: ${{ inputs.runner_label }}
     timeout-minutes: 355
     env:

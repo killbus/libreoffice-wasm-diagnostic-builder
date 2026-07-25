@@ -1,9 +1,10 @@
 # LibreOffice WASM diagnostic builder
 
 An isolated, reproducible GitHub Actions project for compiling one diagnostic
-LibreOffice WASM runtime. It exists only to locate the native boundary of the
-browser `documentLoad` / `documentSaveAs` hang; it is not a production
-LibreOffice fork or a runtime distribution repository.
+LibreOffice WASM runtime. The current build is intentionally pinned to the
+Matbee package-classic `importScripts(soffice.js)` shape and load-only native
+markers so it can locate the exact browser `documentLoad` hang. It is not a
+production LibreOffice fork or a runtime distribution repository.
 
 ## Pinned inputs
 
@@ -11,7 +12,7 @@ LibreOffice fork or a runtime distribution repository.
 - LibreOffice commit: `d1c9e0e4e1ddeb24fe8f93e56860b3765043f8b1`
 - Emscripten SDK: `3.1.74`
 - WASM compatibility patch: `patches/wasm-build-fixes.patch`
-- Native save/export trace patch: `patches/libreoffice-24-8-saveas-native-markers.patch`
+- Package-classic glue patch: `patches/package-classic-glue.patch`
 - Native document-load trace patch: `patches/libreoffice-24-8-document-load-native-markers.patch`
 
 `build.env` records SHA-256 values for every local build input. The build fails
@@ -42,8 +43,9 @@ names are configured by the owning GitHub organization.
 
 ## Outputs
 
-The build emits ES6 glue as `soffice.mjs` (and optionally `soffice.worker.mjs`).
-The collect step renames those into the published artifact names below.
+The build emits classic `soffice.js` glue compatible with Matbee's dedicated
+Worker `importScripts` path. The collect step also creates Node-oriented `.cjs`
+copies without changing the browser artifact contract.
 
 A successful run uploads a seven-day artifact containing:
 
@@ -62,8 +64,9 @@ Logs are uploaded separately for fourteen days even when configure or make
 fails. They include `build.log`, `config.log`, source revision, ccache stats,
 and runner disk usage when available.
 
-The build verifies that the final `soffice.wasm` contains both
-`LOK_SAVEAS_TRACE` and `LOK_LOAD_TRACE` marker strings before publishing it.
+The build verifies that the final glue is not ES6, and that `soffice.wasm`
+contains `LOK_LOAD_TRACE` but does not contain `LOK_SAVEAS_TRACE` before
+publishing it. `BUILD-METADATA.txt` records `package-classic` and `load-only`.
 
 ## Cache policy
 
@@ -84,15 +87,15 @@ the workflow artifact and connect it to an isolated browser route or harness.
 Run exactly one known-hanging DOCX and collect Worker console lines containing:
 
 ```text
-[LOK_SAVEAS_TRACE]
 [LOK_LOAD_TRACE]
 ```
 
 The first boundary with an `entry` and no matching `exit` identifies the native
-hang scope. The load markers cover `SolarMutexGuard`, `frame::Desktop::create`,
-`loadComponentFromURL`, and `LibLODocument_Impl` before save/export begins. If
+hang scope. The markers cover `lo_documentLoadWithOptions`, `SolarMutexGuard`,
+`frame::Desktop::create`, `loadComponentFromURL`, and `LibLODocument_Impl`. If
 every native boundary returns, move investigation to generated WASM glue or
-Worker scheduling.
+Worker scheduling. Save/export variants are deliberately excluded from this
+build.
 
 No document fixtures, proprietary fonts, or production WASM binaries belong in
 this repository.
