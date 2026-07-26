@@ -148,6 +148,23 @@ if [ -e include/vcl/lokwasmsaveasdiagnostic.hxx ]; then
   echo "Unexpected native save/export marker header in load-only source" >&2
   exit 1
 fi
+if ! grep -Fq 'soffice_bin:soffice.js' RepositoryFixes.mk; then
+  echo "Package-classic soffice.js target verification failed" >&2
+  exit 1
+fi
+if grep -Eq 'MODULARIZE=1|EXPORT_ES6=1|EXPORT_NAME=createSofficeModule' desktop/Executable_soffice_bin.mk; then
+  echo "Unexpected modularized/ES6 soffice glue flags in package-classic source" >&2
+  exit 1
+fi
+if ! grep -Fq 'gb_Executable_EXT := .mjs' solenv/gbuild/platform/EMSCRIPTEN_INTEL_GCC.mk; then
+  echo "Expected helper executable .mjs default is missing" >&2
+  exit 1
+fi
+if ! grep -Fq 'emdwp -e $(basename $(1)).wasm -o $(basename $(1)).wasm.dwp' solenv/gbuild/platform/unxgcc.mk; then
+  echo "Package-classic external-DWARF target mapping verification failed" >&2
+  exit 1
+fi
+log "verified package-classic target/glue/external-DWARF contract"
 
 cp "$PROJECT_DIR/autogen.input" autogen.input
 mkdir -p external

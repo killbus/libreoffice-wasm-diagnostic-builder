@@ -13,7 +13,7 @@ diff --git a/RepositoryFixes.mk b/RepositoryFixes.mk
 diff --git a/desktop/Executable_soffice_bin.mk b/desktop/Executable_soffice_bin.mk
 --- a/desktop/Executable_soffice_bin.mk
 +++ b/desktop/Executable_soffice_bin.mk
-@@ -68,14 +68,3 @@ $(eval $(call gb_Executable_add_ldflags,soffice_bin,\
+@@ -67,14 +67,3 @@ $(eval $(call gb_Executable_add_ldflags,soffice_bin,\
 -# MODULARIZE wraps the Emscripten output in a factory function, allowing
 -# proper async initialization and multiple instantiations if needed.
 -# EXPORT_ES6 outputs ES6 module format with import/export syntax.
@@ -27,4 +27,10 @@ diff --git a/desktop/Executable_soffice_bin.mk b/desktop/Executable_soffice_bin.
 -
  $(call gb_Executable_get_linktarget_target,soffice_bin): \
      $(gb_CustomTarget_workdir)/static/unoembind/bindings_uno.js \
-     $(gb_CustomTarget_workdir)/static/unoembind/bindings_uno_objects.js \
+     $(EMSCRIPTEN_EXTRA_SOFFICE_POST_JS)
+diff --git a/solenv/gbuild/platform/unxgcc.mk b/solenv/gbuild/platform/unxgcc.mk
+--- a/solenv/gbuild/platform/unxgcc.mk
++++ b/solenv/gbuild/platform/unxgcc.mk
+@@ -174 +174 @@
+-	$(if $(filter EMSCRIPTEN,$(OS)),$(if $(filter TRUE,$(HAVE_EXTERNAL_DWARF)),&& emdwp -e $(patsubst %$(gb_Executable_EXT),%.wasm,$(1)) -o $(patsubst %$(gb_Executable_EXT),%.wasm.dwp,$(1)))) \
++	$(if $(filter EMSCRIPTEN,$(OS)),$(if $(filter TRUE,$(HAVE_EXTERNAL_DWARF)),&& emdwp -e $(basename $(1)).wasm -o $(basename $(1)).wasm.dwp)) \
