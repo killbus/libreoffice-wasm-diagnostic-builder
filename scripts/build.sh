@@ -10,10 +10,28 @@ if [ "$DIAGNOSTIC_GLUE_MODE" != "package-classic" ]; then
   echo "This diagnostic build must use package-classic glue: $DIAGNOSTIC_GLUE_MODE" >&2
   exit 2
 fi
-if [ "$DIAGNOSTIC_MARKER_SET" != "load-only" ]; then
-  echo "This diagnostic build must use load-only markers: $DIAGNOSTIC_MARKER_SET" >&2
+if [ "$DIAGNOSTIC_MARKER_SET" != "load-v2" ]; then
+  echo "This diagnostic build must use load-v2 markers: $DIAGNOSTIC_MARKER_SET" >&2
   exit 2
 fi
+
+REQUIRED_LOAD_BOUNDARIES=(
+  "lo_documentLoadWithOptions"
+  "SolarMutexGuard"
+  "frame::Desktop::create"
+  "loadComponentFromURL"
+  "LoadEnv::loadComponentFromURL"
+  "LoadEnv::impl_detectTypeAndFilter"
+  "SfxFrameLoader_Impl::load"
+  "SfxBaseModel::load"
+  "SfxObjectShell::DoLoad"
+  "SfxObjectShell::ImportFrom"
+  "WriterFilter::filter"
+  "WriterFilter::OOXMLDocument::resolve"
+  "WriterFilter::pStream.clear"
+  "SfxFrameLoader_Impl::impl_createDocumentView"
+  "LibLODocument_Impl"
+)
 
 BUILD_JOBS_REQUESTED="${BUILD_JOBS:-4}"
 if [[ ! "$BUILD_JOBS_REQUESTED" =~ ^[1-9][0-9]*$ ]]; then
@@ -144,8 +162,22 @@ if ! grep -q 'LOK_LOAD_TRACE' include/vcl/lokwasmdocumentloaddiagnostic.hxx; the
   echo "Native document-load marker verification failed" >&2
   exit 1
 fi
+SOURCE_MARKER_FILES=(
+  desktop/source/lib/init.cxx
+  framework/source/loadenv/loadenv.cxx
+  sfx2/source/view/frmload.cxx
+  sfx2/source/doc/sfxbasemodel.cxx
+  sfx2/source/doc/objstor.cxx
+  sw/source/writerfilter/filter/WriterFilter.cxx
+)
+for boundary in "${REQUIRED_LOAD_BOUNDARIES[@]}"; do
+  if ! grep -Fq -- "\"$boundary\"" "${SOURCE_MARKER_FILES[@]}"; then
+    echo "Missing load-v2 source boundary: $boundary" >&2
+    exit 1
+  fi
+done
 if [ -e include/vcl/lokwasmsaveasdiagnostic.hxx ]; then
-  echo "Unexpected native save/export marker header in load-only source" >&2
+  echo "Unexpected native save/export marker header in load-v2 source" >&2
   exit 1
 fi
 if ! grep -Fq 'soffice_bin:soffice.js' RepositoryFixes.mk; then
@@ -249,8 +281,14 @@ if ! grep -a -q 'LOK_LOAD_TRACE' soffice.wasm; then
   echo "Built WASM does not contain LOK_LOAD_TRACE" >&2
   exit 1
 fi
+for boundary in "${REQUIRED_LOAD_BOUNDARIES[@]}"; do
+  if ! grep -a -Fq -- "$boundary" soffice.wasm; then
+    echo "Built WASM does not contain load-v2 boundary: $boundary" >&2
+    exit 1
+  fi
+done
 if grep -a -q 'LOK_SAVEAS_TRACE' soffice.wasm; then
-  echo "Built WASM unexpectedly contains LOK_SAVEAS_TRACE in load-only mode" >&2
+  echo "Built WASM unexpectedly contains LOK_SAVEAS_TRACE in load-v2 mode" >&2
   exit 1
 fi
 sha256sum soffice.* > SHA256SUMS

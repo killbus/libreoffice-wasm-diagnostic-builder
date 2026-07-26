@@ -2,15 +2,18 @@
 
 An isolated, reproducible GitHub Actions project for compiling one diagnostic
 LibreOffice WASM runtime. The current build is intentionally pinned to the
-Matbee package-classic `importScripts(soffice.js)` shape and load-only native
-markers so it can locate the exact browser `documentLoad` hang. It is not a
-production LibreOffice fork or a runtime distribution repository.
+Matbee package-classic `importScripts(soffice.js)` shape and the `load-v2`
+native marker set so it can locate the deepest active browser `documentLoad`
+scope. It is not a production LibreOffice fork or a runtime distribution
+repository.
 
 ## Pinned inputs
 
 - LibreOffice branch: `libreoffice-24-8`
 - LibreOffice commit: `d1c9e0e4e1ddeb24fe8f93e56860b3765043f8b1`
 - Emscripten SDK: `3.1.74`
+- Diagnostic glue mode: `package-classic`
+- Diagnostic marker set: `load-v2`
 - WASM compatibility patch: `patches/wasm-build-fixes.patch`
 - Package-classic glue patch: `patches/package-classic-glue.patch`
 - Native document-load trace patch: `patches/libreoffice-24-8-document-load-native-markers.patch`
@@ -64,9 +67,10 @@ Logs are uploaded separately for fourteen days even when configure or make
 fails. They include `build.log`, `config.log`, source revision, ccache stats,
 and runner disk usage when available.
 
-The build verifies that the final glue is not ES6, and that `soffice.wasm`
-contains `LOK_LOAD_TRACE` but does not contain `LOK_SAVEAS_TRACE` before
-publishing it. `BUILD-METADATA.txt` records `package-classic` and `load-only`.
+Before publishing, the build verifies that the final glue is not ES6, that
+`soffice.wasm` contains `LOK_LOAD_TRACE` and every required `load-v2` boundary,
+and that it does not contain `LOK_SAVEAS_TRACE`. `BUILD-METADATA.txt` records
+`package-classic`, `load-v2`, and the pinned patch hashes.
 
 ## Cache policy
 
@@ -90,12 +94,50 @@ Run exactly one known-hanging DOCX and collect Worker console lines containing:
 [LOK_LOAD_TRACE]
 ```
 
-The first boundary with an `entry` and no matching `exit` identifies the native
-hang scope. The markers cover `lo_documentLoadWithOptions`, `SolarMutexGuard`,
-`frame::Desktop::create`, `loadComponentFromURL`, and `LibLODocument_Impl`. If
-every native boundary returns, move investigation to generated WASM glue or
-Worker scheduling. Save/export variants are deliberately excluded from this
-build.
+Every new nested boundary is an RAII scope, so exceptions and ordinary returns
+produce a matching `exit`. The marker set brackets only top-level functions or
+single O(1)-per-load calls; it deliberately excludes DomainMapper per-element
+probes, wait/yield/lock speculation, document content, URLs, filenames, filter
+options, UNO payloads, and save/export markers.
 
-No document fixtures, proprietary fonts, or production WASM binaries belong in
-this repository.
+The ordered boundaries are:
+
+1. `lo_documentLoadWithOptions`
+2. `SolarMutexGuard`
+3. `frame::Desktop::create`
+4. outer LOK call site `loadComponentFromURL`
+5. `LoadEnv::loadComponentFromURL`
+6. `LoadEnv::impl_detectTypeAndFilter`
+7. `SfxFrameLoader_Impl::load`
+8. `SfxBaseModel::load`
+9. `SfxObjectShell::DoLoad`
+10. `SfxObjectShell::ImportFrom`
+11. `WriterFilter::filter`
+12. `WriterFilter::OOXMLDocument::resolve`
+13. `WriterFilter::pStream.clear`
+14. `SfxFrameLoader_Impl::impl_createDocumentView`
+15. `LibLODocument_Impl`
+
+Use the deepest boundary with an `entry` and no matching `exit` only as a scope
+localizer:
+
+| Last completed / first missing return | Evidence-supported scope |
+| --- | --- |
+| Outer call entered; `LoadEnv::loadComponentFromURL` absent | dispatch, UNO, or generated-glue gap before the implementation body |
+| `LoadEnv::loadComponentFromURL` entered; detection absent | `LoadEnv` setup or pre-detection path |
+| detection entered without exit | type/filter detection |
+| detection exited; frame loader absent | content handling, frame creation, loader lookup, or synchronous dispatch |
+| frame loader entered; model load absent | descriptor/filter/model service creation |
+| model load entered; `DoLoad` absent | medium or filter validation |
+| `DoLoad` entered; `ImportFrom` absent | object-shell setup or a non-generic import branch |
+| `ImportFrom` entered; `WriterFilter::filter` absent | filter service creation or UNO filter dispatch |
+| writer filter entered; `resolve` absent | package, DomainMapper, or OOXML setup before resolution |
+| `resolve` entered without exit | OOXML parsing/mapping scope; not root-cause proof by itself |
+| `resolve` exited; stream clear absent | post-import grab-bag, theme, custom XML, or VBA handling |
+| stream clear entered without exit | stream/DomainMapper teardown, including `RemoveLastParagraph` |
+| import returned; view creation entered without exit | view, layout, or controller construction |
+| all nested scopes return; outer LOK call does not | `LoadEnv` result/destruction, UNO return, or generated glue; do not blame Writer import |
+
+If every native boundary returns, move investigation to the generated WASM glue
+or Worker scheduling. No document fixtures, proprietary fonts, or production
+WASM binaries belong in this repository.
