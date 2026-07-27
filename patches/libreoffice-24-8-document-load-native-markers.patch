@@ -1,8 +1,8 @@
 diff --git a/desktop/source/lib/init.cxx b/desktop/source/lib/init.cxx
-index ece81f035..7bc891a54 100644
+index eb3037281..2fb2ca91a 100644
 --- a/desktop/source/lib/init.cxx
 +++ b/desktop/source/lib/init.cxx
-@@ -65,6 +65,7 @@
+@@ -66,6 +66,7 @@
  #include <utility>
  #include <vcl/errinf.hxx>
  #include <vcl/lok.hxx>
@@ -10,7 +10,7 @@ index ece81f035..7bc891a54 100644
  #include <o3tl/any.hxx>
  #include <o3tl/unit_conversion.hxx>
  #include <o3tl/string_view.hxx>
-@@ -2650,9 +2651,13 @@ static LibreOfficeKitDocument* lo_documentLoad(LibreOfficeKit* pThis, const char
+@@ -2653,9 +2654,13 @@ static LibreOfficeKitDocument* lo_documentLoad(LibreOfficeKit* pThis, const char
  
  static LibreOfficeKitDocument* lo_documentLoadWithOptions(LibreOfficeKit* pThis, const char* pURL, const char* pOptions)
  {
@@ -22,9 +22,9 @@ index ece81f035..7bc891a54 100644
      SolarMutexGuard aGuard;
 +    vcl::lok::emitWasmDocumentLoadDiagnostic("SolarMutexGuard", "exit", pThis);
  
-     static int nDocumentIdCounter = 0;
- 
-@@ -2676,7 +2681,9 @@ static LibreOfficeKitDocument* lo_documentLoadWithOptions(LibreOfficeKit* pThis,
+     // TEMPORARILY DISABLED: Abort mechanism causing WASM memory issues
+     // TODO: Re-enable once SharedArrayBuffer alignment is fixed
+@@ -2687,7 +2692,9 @@ static LibreOfficeKitDocument* lo_documentLoadWithOptions(LibreOfficeKit* pThis,
          return nullptr;
      }
  
@@ -34,7 +34,7 @@ index ece81f035..7bc891a54 100644
  
      if (!xComponentLoader.is())
      {
-@@ -2797,9 +2804,11 @@ static LibreOfficeKitDocument* lo_documentLoadWithOptions(LibreOfficeKit* pThis,
+@@ -2808,9 +2815,11 @@ static LibreOfficeKitDocument* lo_documentLoadWithOptions(LibreOfficeKit* pThis,
  
          const int nThisDocumentId = nDocumentIdCounter++;
          SfxViewShell::SetCurrentDocId(ViewShellDocId(nThisDocumentId));
@@ -46,7 +46,7 @@ index ece81f035..7bc891a54 100644
  
          assert(!xComponent.is() || pair.second); // concurrent loading of same URL ought to fail
  
-@@ -2810,7 +2819,9 @@ static LibreOfficeKitDocument* lo_documentLoadWithOptions(LibreOfficeKit* pThis,
+@@ -2821,7 +2830,9 @@ static LibreOfficeKitDocument* lo_documentLoadWithOptions(LibreOfficeKit* pThis,
              return nullptr;
          }
  
@@ -88,7 +88,7 @@ index 299b0fcd5..aab8055e7 100644
      // SAFE ->
 diff --git a/include/vcl/lokwasmdocumentloaddiagnostic.hxx b/include/vcl/lokwasmdocumentloaddiagnostic.hxx
 new file mode 100644
-index 0000000..08c22f5
+index 000000000..08c22f576
 --- /dev/null
 +++ b/include/vcl/lokwasmdocumentloaddiagnostic.hxx
 @@ -0,0 +1,61 @@
@@ -195,7 +195,7 @@ index 6fd6b8283..c2db15efa 100644
      // for correct menu creation the initialized component must be already set into the frame
      xController->attachFrame(xFrame);
 diff --git a/sfx2/source/doc/objstor.cxx b/sfx2/source/doc/objstor.cxx
-index 18e268ff1..c323c4fca 100644
+index b278ea56b..847b44b4c 100644
 --- a/sfx2/source/doc/objstor.cxx
 +++ b/sfx2/source/doc/objstor.cxx
 @@ -86,6 +86,7 @@
@@ -215,7 +215,7 @@ index 18e268ff1..c323c4fca 100644
      ModifyBlocker_Impl aBlock( this );
  
      pMedium = pMed;
-@@ -2301,6 +2304,8 @@ bool SfxObjectShell::ConvertFrom
+@@ -2303,6 +2306,8 @@ bool SfxObjectShell::ConvertFrom
  bool SfxObjectShell::ImportFrom(SfxMedium& rMedium,
          css::uno::Reference<css::text::XTextRange> const& xInsertPosition)
  {
@@ -349,7 +349,7 @@ index 1560978be..7aa248c0a 100644
          Reference<lang::XInitialization> xInit(xController, UNO_QUERY);
          if (xInit.is())
 diff --git a/sfx2/source/view/sfxbasecontroller.cxx b/sfx2/source/view/sfxbasecontroller.cxx
-index 7ad3a2d6c..859f8f19d 100644
+index 7ad3a2d6c..242eeb84e 100644
 --- a/sfx2/source/view/sfxbasecontroller.cxx
 +++ b/sfx2/source/view/sfxbasecontroller.cxx
 @@ -65,6 +65,7 @@
@@ -378,6 +378,190 @@ index 7ad3a2d6c..859f8f19d 100644
      ENSURE_OR_THROW( m_pData->m_pViewShell, "not to be called without a view shell" );
      SfxViewFrame* pViewFrame = m_pData->m_pViewShell->GetFrame();
      ENSURE_OR_THROW( pViewFrame, "a view shell without a view frame is pretty pathological" );
+@@ -1130,8 +1135,16 @@ void SfxBaseController::ConnectSfxFrame_Impl( const ConnectSfxFrame i_eConnect )
+     const bool bConnect = ( i_eConnect != E_DISCONNECT );
+ 
+     // disable window and dispatcher
+-    pViewFrame->Enable( bConnect );
+-    pViewFrame->GetDispatcher()->Lock( !bConnect );
++    {
++        vcl::lok::WasmDocumentLoadDiagnosticScope aEnableViewFrameDiagnosticScope(
++            "ConnectSfxFrame::EnableViewFrame", pViewFrame);
++        pViewFrame->Enable( bConnect );
++    }
++    {
++        vcl::lok::WasmDocumentLoadDiagnosticScope aUnlockDispatcherDiagnosticScope(
++            "ConnectSfxFrame::UnlockDispatcher", pViewFrame);
++        pViewFrame->GetDispatcher()->Lock( !bConnect );
++    }
+ 
+     if ( bConnect )
+     {
+@@ -1165,32 +1178,63 @@ void SfxBaseController::ConnectSfxFrame_Impl( const ConnectSfxFrame i_eConnect )
+         // RECONNECT, we're not allowed to push them
+         if ( i_eConnect != E_RECONNECT )
+         {
+-            pViewFrame->GetDispatcher()->Push( *m_pData->m_pViewShell );
+-            m_pData->m_pViewShell->PushSubShells_Impl();
+-            pViewFrame->GetDispatcher()->Flush();
++            {
++                vcl::lok::WasmDocumentLoadDiagnosticScope aPushViewShellDiagnosticScope(
++                    "ConnectSfxFrame::PushViewShell", pViewFrame);
++                pViewFrame->GetDispatcher()->Push( *m_pData->m_pViewShell );
++            }
++            {
++                vcl::lok::WasmDocumentLoadDiagnosticScope aPushSubShellsDiagnosticScope(
++                    "ConnectSfxFrame::PushSubShells", m_pData->m_pViewShell);
++                m_pData->m_pViewShell->PushSubShells_Impl();
++            }
++            {
++                vcl::lok::WasmDocumentLoadDiagnosticScope aFlushDispatcherDiagnosticScope(
++                    "ConnectSfxFrame::FlushDispatcher", pViewFrame);
++                pViewFrame->GetDispatcher()->Flush();
++            }
+         }
+ 
+         vcl::Window* pEditWin = m_pData->m_pViewShell->GetWindow();
+         if ( pEditWin )
++        {
++            vcl::lok::WasmDocumentLoadDiagnosticScope aShowEditWindowDiagnosticScope(
++                "ConnectSfxFrame::ShowEditWindow", pEditWin);
+             pEditWin->Show();
++        }
+ 
+         if ( SfxViewFrame::Current() == pViewFrame )
++        {
++            vcl::lok::WasmDocumentLoadDiagnosticScope aUpdateCurrentDispatcherDiagnosticScope(
++                "ConnectSfxFrame::UpdateCurrentDispatcher", pViewFrame);
+             pViewFrame->GetDispatcher()->Update_Impl( true );
++        }
+ 
+         vcl::Window* pFrameWin = &pViewFrame->GetWindow();
+         if ( pFrameWin != &pViewFrame->GetFrame().GetWindow() )
++        {
++            vcl::lok::WasmDocumentLoadDiagnosticScope aShowPreActivationFrameWindowDiagnosticScope(
++                "ConnectSfxFrame::ShowPreActivationFrameWindow", pFrameWin);
+             pFrameWin->Show();
++        }
+ 
+         if ( i_eConnect == E_CONNECT )
+         {
+-            css::uno::Reference<css::frame::XModel3> xModel(getModel(), css::uno::UNO_QUERY_THROW);
+-            const sal_Int16 nPluginMode = ::comphelper::NamedValueCollection::getOrDefault( xModel->getArgs2( { u"PluginMode"_ustr } ), u"PluginMode", sal_Int16( 0 ) );
++            sal_Int16 nPluginMode = 0;
++            {
++                vcl::lok::WasmDocumentLoadDiagnosticScope aGetPluginModeDiagnosticScope(
++                    "ConnectSfxFrame::GetPluginMode", this);
++                css::uno::Reference<css::frame::XModel3> xModel(getModel(), css::uno::UNO_QUERY_THROW);
++                nPluginMode = ::comphelper::NamedValueCollection::getOrDefault( xModel->getArgs2( { u"PluginMode"_ustr } ), u"PluginMode", sal_Int16( 0 ) );
++            }
+             const bool bHasPluginMode = ( nPluginMode != 0 );
+ 
+             SfxFrame& rFrame = pViewFrame->GetFrame();
+             SfxObjectShell& rDoc = *m_pData->m_pViewShell->GetObjectShell();
+             if ( !rFrame.IsMarkedHidden_Impl() )
+             {
++                vcl::lok::WasmDocumentLoadDiagnosticScope aVisibleFrameSetupDiagnosticScope(
++                    "ConnectSfxFrame::VisibleFrameSetup", &rFrame);
+                 if ( rDoc.IsHelpDocument() || ( nPluginMode == 2 ) )
+                     pViewFrame->GetDispatcher()->HideUI();
+                 else
+@@ -1221,20 +1265,41 @@ void SfxBaseController::ConnectSfxFrame_Impl( const ConnectSfxFrame i_eConnect )
+             else
+             {
+                 DBG_ASSERT( !rFrame.IsInPlace() && !bHasPluginMode, "Special modes not compatible with hidden mode!" );
+-                rFrame.GetWindow().Show();
++                {
++                    vcl::lok::WasmDocumentLoadDiagnosticScope aHiddenFrameWindowShowDiagnosticScope(
++                        "ConnectSfxFrame::HiddenFrameWindowShow", &rFrame);
++                    rFrame.GetWindow().Show();
++                }
+             }
+ 
+             // UpdateTitle now, hidden TopFrames have otherwise no Name!
+-            pViewFrame->UpdateTitle();
++            {
++                vcl::lok::WasmDocumentLoadDiagnosticScope aUpdateTitleDiagnosticScope(
++                    "ConnectSfxFrame::UpdateTitle", pViewFrame);
++                pViewFrame->UpdateTitle();
++            }
+ 
+             if ( !rFrame.IsInPlace() )
++            {
++                vcl::lok::WasmDocumentLoadDiagnosticScope aResizeViewFrameDiagnosticScope(
++                    "ConnectSfxFrame::ResizeViewFrame", pViewFrame);
+                 pViewFrame->Resize( true );
++            }
+ 
+-            ::comphelper::NamedValueCollection aViewArgs(getCreationArguments());
++            ::comphelper::NamedValueCollection aViewArgs;
++            {
++                vcl::lok::WasmDocumentLoadDiagnosticScope aGetCreationArgumentsDiagnosticScope(
++                    "ConnectSfxFrame::GetCreationArguments", this);
++                aViewArgs = ::comphelper::NamedValueCollection(getCreationArguments());
++            }
+ 
+             // sometimes we want to avoid adding to the recent documents
+             bool bAllowPickListEntry = aViewArgs.getOrDefault(u"PickListEntry"_ustr, true);
+-            m_pData->m_pViewShell->GetObjectShell()->AvoidRecentDocs(!bAllowPickListEntry);
++            {
++                vcl::lok::WasmDocumentLoadDiagnosticScope aApplyRecentDocsPolicyDiagnosticScope(
++                    "ConnectSfxFrame::ApplyRecentDocsPolicy", m_pData->m_pViewShell);
++                m_pData->m_pViewShell->GetObjectShell()->AvoidRecentDocs(!bAllowPickListEntry);
++            }
+ 
+             // if there's a JumpMark given, then, well, jump to it
+             const OUString sJumpMark = aViewArgs.getOrDefault( u"JumpMark"_ustr, OUString() );
+@@ -1246,7 +1311,11 @@ void SfxBaseController::ConnectSfxFrame_Impl( const ConnectSfxFrame i_eConnect )
+                 // (SfxObjectShell::PositionView_Impl), but it seems this branch was never used, since this method
+                 // here is never called before the load process finished. At least not with a non-empty jump mark
+             if ( !sJumpMark.isEmpty() )
++            {
++                vcl::lok::WasmDocumentLoadDiagnosticScope aJumpToMarkDiagnosticScope(
++                    "ConnectSfxFrame::JumpToMark", m_pData->m_pViewShell);
+                 m_pData->m_pViewShell->JumpToMark( sJumpMark );
++            }
+ 
+             // if no plugin mode and no jump mark was supplied, check whether the document itself can provide view data, and
+             // if so, forward it to the view/shell.
+@@ -1267,8 +1336,14 @@ void SfxBaseController::ConnectSfxFrame_Impl( const ConnectSfxFrame i_eConnect )
+                 //   with the model's view data
+                 try
+                 {
+-                    Reference< XViewDataSupplier > xViewDataSupplier( getModel(), UNO_QUERY_THROW );
+-                    Reference< XIndexAccess > xViewData( xViewDataSupplier->getViewData() );
++                    Reference< XViewDataSupplier > xViewDataSupplier;
++                    Reference< XIndexAccess > xViewData;
++                    {
++                        vcl::lok::WasmDocumentLoadDiagnosticScope aGetViewDataDiagnosticScope(
++                            "ConnectSfxFrame::GetViewData", this);
++                        xViewDataSupplier = Reference< XViewDataSupplier >( getModel(), UNO_QUERY_THROW );
++                        xViewData = Reference< XIndexAccess >( xViewDataSupplier->getViewData() );
++                    }
+ 
+                     // find the view data item whose ViewId matches the ID of the view we're just connecting to
+                     const SfxObjectFactory& rDocFactory( rDoc.GetFactory() );
+@@ -1301,6 +1376,8 @@ void SfxBaseController::ConnectSfxFrame_Impl( const ConnectSfxFrame i_eConnect )
+                         if (aViewData.hasElements() || !xViewData.is())
+                         {
+                             // Tolerate empty xViewData, ReadUserDataSequence() has side effects.
++                            vcl::lok::WasmDocumentLoadDiagnosticScope aReadUserDataSequenceDiagnosticScope(
++                                "ConnectSfxFrame::ReadUserDataSequence", m_pData->m_pViewShell);
+                             m_pData->m_pViewShell->ReadUserDataSequence( aViewData );
+                         }
+                     }
+@@ -1317,7 +1394,11 @@ void SfxBaseController::ConnectSfxFrame_Impl( const ConnectSfxFrame i_eConnect )
+     const sal_uInt16 nViewNo = m_pData->m_pViewShell->GetObjectShell()->GetFactory().GetViewNo_Impl( pViewFrame->GetCurViewId(), USHRT_MAX );
+     DBG_ASSERT( nViewNo != USHRT_MAX, "view shell id not found" );
+     if ( nViewNo != USHRT_MAX )
++    {
++        vcl::lok::WasmDocumentLoadDiagnosticScope aInvalidateViewBindingDiagnosticScope(
++            "ConnectSfxFrame::InvalidateViewBinding", pViewFrame);
+         pViewFrame->GetBindings().Invalidate( nViewNo + SID_VIEWSHELL0 );
++    }
+ }
+ 
+ void SfxBaseController::ShowInfoBars( )
 diff --git a/sfx2/source/view/viewfac.cxx b/sfx2/source/view/viewfac.cxx
 index b98cd48a1..a01b4aeaa 100644
 --- a/sfx2/source/view/viewfac.cxx

@@ -10,8 +10,8 @@ if [ "$DIAGNOSTIC_GLUE_MODE" != "package-classic" ]; then
   echo "This diagnostic build must use package-classic glue: $DIAGNOSTIC_GLUE_MODE" >&2
   exit 2
 fi
-if [ "$DIAGNOSTIC_MARKER_SET" != "load-v3" ]; then
-  echo "This diagnostic build must use load-v3 markers: $DIAGNOSTIC_MARKER_SET" >&2
+if [ "$DIAGNOSTIC_MARKER_SET" != "load-v4" ]; then
+  echo "This diagnostic build must use load-v4 markers: $DIAGNOSTIC_MARKER_SET" >&2
   exit 2
 fi
 
@@ -43,6 +43,25 @@ REQUIRED_LOAD_BOUNDARIES=(
   "XFrame::setComponent"
   "SfxBaseController::attachFrame"
   "SfxBaseController::ConnectSfxFrame_Impl"
+  "ConnectSfxFrame::EnableViewFrame"
+  "ConnectSfxFrame::UnlockDispatcher"
+  "ConnectSfxFrame::PushViewShell"
+  "ConnectSfxFrame::PushSubShells"
+  "ConnectSfxFrame::FlushDispatcher"
+  "ConnectSfxFrame::ShowEditWindow"
+  "ConnectSfxFrame::UpdateCurrentDispatcher"
+  "ConnectSfxFrame::ShowPreActivationFrameWindow"
+  "ConnectSfxFrame::GetPluginMode"
+  "ConnectSfxFrame::VisibleFrameSetup"
+  "ConnectSfxFrame::HiddenFrameWindowShow"
+  "ConnectSfxFrame::UpdateTitle"
+  "ConnectSfxFrame::ResizeViewFrame"
+  "ConnectSfxFrame::GetCreationArguments"
+  "ConnectSfxFrame::ApplyRecentDocsPolicy"
+  "ConnectSfxFrame::JumpToMark"
+  "ConnectSfxFrame::GetViewData"
+  "ConnectSfxFrame::ReadUserDataSequence"
+  "ConnectSfxFrame::InvalidateViewBinding"
   "LibLODocument_Impl"
 )
 
@@ -202,7 +221,7 @@ SOURCE_MARKER_FILES=(
 )
 for boundary in "${REQUIRED_LOAD_BOUNDARIES[@]}"; do
   if ! grep -Fq -- "\"$boundary\"" "${SOURCE_MARKER_FILES[@]}"; then
-    echo "Missing load-v3 source boundary: $boundary" >&2
+    echo "Missing load-v4 source boundary: $boundary" >&2
     exit 1
   fi
 done
@@ -226,12 +245,42 @@ for boundary_count in "${REQUIRED_CREATE_VIEW_LITERAL_COUNTS[@]}"; do
   expected_count="${boundary_count##*=}"
   actual_count="$(grep -Fho -- "\"$boundary\"" "${SOURCE_MARKER_FILES[@]}" | wc -l)"
   if [ "$actual_count" -ne "$expected_count" ]; then
-    echo "Unexpected load-v3 source literal count for $boundary: expected $expected_count, got $actual_count" >&2
+    echo "Unexpected load-v4 source literal count for $boundary: expected $expected_count, got $actual_count" >&2
+    exit 1
+  fi
+done
+REQUIRED_CONNECT_SFX_FRAME_LITERAL_COUNTS=(
+  "ConnectSfxFrame::EnableViewFrame=1"
+  "ConnectSfxFrame::UnlockDispatcher=1"
+  "ConnectSfxFrame::PushViewShell=1"
+  "ConnectSfxFrame::PushSubShells=1"
+  "ConnectSfxFrame::FlushDispatcher=1"
+  "ConnectSfxFrame::ShowEditWindow=1"
+  "ConnectSfxFrame::UpdateCurrentDispatcher=1"
+  "ConnectSfxFrame::ShowPreActivationFrameWindow=1"
+  "ConnectSfxFrame::GetPluginMode=1"
+  "ConnectSfxFrame::VisibleFrameSetup=1"
+  "ConnectSfxFrame::HiddenFrameWindowShow=1"
+  "ConnectSfxFrame::UpdateTitle=1"
+  "ConnectSfxFrame::ResizeViewFrame=1"
+  "ConnectSfxFrame::GetCreationArguments=1"
+  "ConnectSfxFrame::ApplyRecentDocsPolicy=1"
+  "ConnectSfxFrame::JumpToMark=1"
+  "ConnectSfxFrame::GetViewData=1"
+  "ConnectSfxFrame::ReadUserDataSequence=1"
+  "ConnectSfxFrame::InvalidateViewBinding=1"
+)
+for boundary_count in "${REQUIRED_CONNECT_SFX_FRAME_LITERAL_COUNTS[@]}"; do
+  boundary="${boundary_count%=*}"
+  expected_count="${boundary_count##*=}"
+  actual_count="$(grep -Fho -- "\"$boundary\"" "${SOURCE_MARKER_FILES[@]}" | wc -l)"
+  if [ "$actual_count" -ne "$expected_count" ]; then
+    echo "Unexpected load-v4 source literal count for $boundary: expected $expected_count, got $actual_count" >&2
     exit 1
   fi
 done
 if [ -e include/vcl/lokwasmsaveasdiagnostic.hxx ]; then
-  echo "Unexpected native save/export marker header in load-v3 source" >&2
+  echo "Unexpected native save/export marker header in load-v4 source" >&2
   exit 1
 fi
 if ! grep -Fq 'soffice_bin:soffice.js' RepositoryFixes.mk; then
@@ -337,12 +386,12 @@ if ! grep -a -q 'LOK_LOAD_TRACE' soffice.wasm; then
 fi
 for boundary in "${REQUIRED_LOAD_BOUNDARIES[@]}"; do
   if ! grep -a -Fq -- "$boundary" soffice.wasm; then
-    echo "Built WASM does not contain load-v3 boundary: $boundary" >&2
+    echo "Built WASM does not contain load-v4 boundary: $boundary" >&2
     exit 1
   fi
 done
 if grep -a -q 'LOK_SAVEAS_TRACE' soffice.wasm; then
-  echo "Built WASM unexpectedly contains LOK_SAVEAS_TRACE in load-v3 mode" >&2
+  echo "Built WASM unexpectedly contains LOK_SAVEAS_TRACE in load-v4 mode" >&2
   exit 1
 fi
 sha256sum soffice.* > SHA256SUMS

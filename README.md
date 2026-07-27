@@ -2,7 +2,7 @@
 
 An isolated, reproducible GitHub Actions project for compiling one diagnostic
 LibreOffice WASM runtime. The current build is intentionally pinned to the
-Matbee package-classic `importScripts(soffice.js)` shape and the `load-v3`
+Matbee package-classic `importScripts(soffice.js)` shape and the `load-v4`
 native marker set so it can locate the deepest active browser `documentLoad`
 scope. It is not a production LibreOffice fork or a runtime distribution
 repository.
@@ -13,7 +13,7 @@ repository.
 - LibreOffice commit: `d1c9e0e4e1ddeb24fe8f93e56860b3765043f8b1`
 - Emscripten SDK: `3.1.74`
 - Diagnostic glue mode: `package-classic`
-- Diagnostic marker set: `load-v3`
+- Diagnostic marker set: `load-v4`
 - WASM compatibility patch: `patches/wasm-build-fixes.patch`
 - Package-classic glue patch: `patches/package-classic-glue.patch`
 - Native document-load trace patch: `patches/libreoffice-24-8-document-load-native-markers.patch`
@@ -68,9 +68,9 @@ fails. They include `build.log`, `config.log`, source revision, ccache stats,
 and runner disk usage when available.
 
 Before publishing, the build verifies that the final glue is not ES6, that
-`soffice.wasm` contains `LOK_LOAD_TRACE` and every required `load-v3` boundary,
+`soffice.wasm` contains `LOK_LOAD_TRACE` and every required `load-v4` boundary,
 and that it does not contain `LOK_SAVEAS_TRACE`. `BUILD-METADATA.txt` records
-`package-classic`, `load-v3`, and the pinned patch hashes.
+`package-classic`, `load-v4`, and the pinned patch hashes.
 
 ## Cache policy
 
@@ -131,7 +131,26 @@ The ordered boundaries are:
 25. `XFrame::setComponent`
 26. `SfxBaseController::attachFrame`
 27. `SfxBaseController::ConnectSfxFrame_Impl`
-28. `LibLODocument_Impl`
+28. `ConnectSfxFrame::EnableViewFrame`
+29. `ConnectSfxFrame::UnlockDispatcher`
+30. `ConnectSfxFrame::PushViewShell`
+31. `ConnectSfxFrame::PushSubShells`
+32. `ConnectSfxFrame::FlushDispatcher`
+33. `ConnectSfxFrame::ShowEditWindow`
+34. `ConnectSfxFrame::UpdateCurrentDispatcher`
+35. `ConnectSfxFrame::ShowPreActivationFrameWindow`
+36. `ConnectSfxFrame::GetPluginMode`
+37. `ConnectSfxFrame::VisibleFrameSetup`
+38. `ConnectSfxFrame::HiddenFrameWindowShow`
+39. `ConnectSfxFrame::UpdateTitle`
+40. `ConnectSfxFrame::ResizeViewFrame`
+41. `ConnectSfxFrame::GetCreationArguments`
+42. `ConnectSfxFrame::ApplyRecentDocsPolicy`
+43. `ConnectSfxFrame::JumpToMark`
+44. `ConnectSfxFrame::GetViewData`
+45. `ConnectSfxFrame::ReadUserDataSequence`
+46. `ConnectSfxFrame::InvalidateViewBinding`
+47. `LibLODocument_Impl`
 
 Use the deepest boundary with an `entry` and no matching `exit` only as a scope
 localizer:
@@ -165,10 +184,16 @@ localizer:
 | model/controller connection entered without exit | one grouped `attachModel`, `connectController`, or `setCurrentController` call |
 | model connection exited; component setup entered without exit | component-window retrieval or `XFrame::setComponent` |
 | component setup exited; `attachFrame` entered before Sfx connection | SolarMutex, frame listener handling, or pre-connect work; not SolarMutex root-cause proof |
-| Sfx connection entered without exit | dispatcher/window/UI activation, resize, view-data restore, or binding invalidation |
+| Sfx connection entered; `EnableViewFrame` did not enter | view-shell/frame validation or the transition to `Enable`; no unique callee yet |
+| a `ConnectSfxFrame::*` scope entered without exit | that direct synchronous operation or work below it; this does not identify a lock or wait primitive |
+| `GetPluginMode` exited; visible or hidden setup entered without exit | the selected activation branch; the two branch markers are mutually exclusive |
+| `UpdateTitle` exited; `ResizeViewFrame` entered without exit | forced non-in-place resize or work below it; not proof of a layout root cause |
+| `GetViewData` entered without exit | model view-data acquisition; no view-data payload is logged |
+| `GetViewData` exited; `ReadUserDataSequence` entered without exit | Writer view-data restore or work below it; not a unique cursor, zoom, layout, or shell-action proof |
+| `InvalidateViewBinding` exited; Sfx connection did not exit | re-check the function epilogue before expanding beyond `ConnectSfxFrame_Impl` |
 | Sfx connection exited; `attachFrame` did not exit | info bars or `ViewCreated` event construction/notification |
 | `attachFrame` exited; frame/controller/model connection did not exit | optional modified-state re-enable or helper return handling |
-| all thirteen new scopes exit; outer view creation does not | controller reference/caller/UNO/WASM propagation after view creation |
+| all thirteen create-view scopes exit; outer view creation does not | controller reference/caller/UNO/WASM propagation after view creation |
 | all nested scopes return; outer LOK call does not | `LoadEnv` result/destruction, UNO return, or generated glue; do not blame Writer import |
 
 If every native boundary returns, move investigation to the generated WASM glue
