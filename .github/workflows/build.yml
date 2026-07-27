@@ -23,7 +23,7 @@ concurrency:
 
 jobs:
   build:
-    name: LibreOffice WASM package-classic load-v2 build
+    name: LibreOffice WASM package-classic load-v3 build
     runs-on: ${{ inputs.runner_label }}
     timeout-minutes: 355
     env:

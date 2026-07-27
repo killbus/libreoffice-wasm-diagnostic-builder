@@ -10,8 +10,8 @@ if [ "$DIAGNOSTIC_GLUE_MODE" != "package-classic" ]; then
   echo "This diagnostic build must use package-classic glue: $DIAGNOSTIC_GLUE_MODE" >&2
   exit 2
 fi
-if [ "$DIAGNOSTIC_MARKER_SET" != "load-v2" ]; then
-  echo "This diagnostic build must use load-v2 markers: $DIAGNOSTIC_MARKER_SET" >&2
+if [ "$DIAGNOSTIC_MARKER_SET" != "load-v3" ]; then
+  echo "This diagnostic build must use load-v3 markers: $DIAGNOSTIC_MARKER_SET" >&2
   exit 2
 fi
 
@@ -30,6 +30,19 @@ REQUIRED_LOAD_BOUNDARIES=(
   "WriterFilter::OOXMLDocument::resolve"
   "WriterFilter::pStream.clear"
   "SfxFrameLoader_Impl::impl_createDocumentView"
+  "SfxBaseModel::createViewController"
+  "SfxBaseModel::SfxModelGuard"
+  "SfxBaseModel::FindOrCreateViewFrame_Impl"
+  "SfxFrame::Create"
+  "SfxFrame::PrepareForDoc_Impl"
+  "SfxViewFrame::SfxViewFrame"
+  "SfxViewFactory::CreateInstance"
+  "SwView::SwWrtShell"
+  "utl::ConnectFrameControllerModel"
+  "utl::ConnectModelController"
+  "XFrame::setComponent"
+  "SfxBaseController::attachFrame"
+  "SfxBaseController::ConnectSfxFrame_Impl"
   "LibLODocument_Impl"
 )
 
@@ -165,19 +178,48 @@ fi
 SOURCE_MARKER_FILES=(
   desktop/source/lib/init.cxx
   framework/source/loadenv/loadenv.cxx
+  include/unotools/fcm.hxx
   sfx2/source/view/frmload.cxx
   sfx2/source/doc/sfxbasemodel.cxx
   sfx2/source/doc/objstor.cxx
+  sfx2/source/view/frame2.cxx
+  sfx2/source/view/sfxbasecontroller.cxx
+  sfx2/source/view/viewfac.cxx
+  sw/source/uibase/uiview/view.cxx
   sw/source/writerfilter/filter/WriterFilter.cxx
 )
 for boundary in "${REQUIRED_LOAD_BOUNDARIES[@]}"; do
   if ! grep -Fq -- "\"$boundary\"" "${SOURCE_MARKER_FILES[@]}"; then
-    echo "Missing load-v2 source boundary: $boundary" >&2
+    echo "Missing load-v3 source boundary: $boundary" >&2
+    exit 1
+  fi
+done
+REQUIRED_CREATE_VIEW_LITERAL_COUNTS=(
+  "SfxBaseModel::createViewController=1"
+  "SfxBaseModel::SfxModelGuard=2"
+  "SfxBaseModel::FindOrCreateViewFrame_Impl=1"
+  "SfxFrame::Create=1"
+  "SfxFrame::PrepareForDoc_Impl=1"
+  "SfxViewFrame::SfxViewFrame=1"
+  "SfxViewFactory::CreateInstance=1"
+  "SwView::SwWrtShell=2"
+  "utl::ConnectFrameControllerModel=1"
+  "utl::ConnectModelController=1"
+  "XFrame::setComponent=1"
+  "SfxBaseController::attachFrame=1"
+  "SfxBaseController::ConnectSfxFrame_Impl=1"
+)
+for boundary_count in "${REQUIRED_CREATE_VIEW_LITERAL_COUNTS[@]}"; do
+  boundary="${boundary_count%=*}"
+  expected_count="${boundary_count##*=}"
+  actual_count="$(grep -Fho -- "\"$boundary\"" "${SOURCE_MARKER_FILES[@]}" | wc -l)"
+  if [ "$actual_count" -ne "$expected_count" ]; then
+    echo "Unexpected load-v3 source literal count for $boundary: expected $expected_count, got $actual_count" >&2
     exit 1
   fi
 done
 if [ -e include/vcl/lokwasmsaveasdiagnostic.hxx ]; then
-  echo "Unexpected native save/export marker header in load-v2 source" >&2
+  echo "Unexpected native save/export marker header in load-v3 source" >&2
   exit 1
 fi
 if ! grep -Fq 'soffice_bin:soffice.js' RepositoryFixes.mk; then
@@ -283,12 +325,12 @@ if ! grep -a -q 'LOK_LOAD_TRACE' soffice.wasm; then
 fi
 for boundary in "${REQUIRED_LOAD_BOUNDARIES[@]}"; do
   if ! grep -a -Fq -- "$boundary" soffice.wasm; then
-    echo "Built WASM does not contain load-v2 boundary: $boundary" >&2
+    echo "Built WASM does not contain load-v3 boundary: $boundary" >&2
     exit 1
   fi
 done
 if grep -a -q 'LOK_SAVEAS_TRACE' soffice.wasm; then
-  echo "Built WASM unexpectedly contains LOK_SAVEAS_TRACE in load-v2 mode" >&2
+  echo "Built WASM unexpectedly contains LOK_SAVEAS_TRACE in load-v3 mode" >&2
   exit 1
 fi
 sha256sum soffice.* > SHA256SUMS

@@ -2,7 +2,7 @@
 
 An isolated, reproducible GitHub Actions project for compiling one diagnostic
 LibreOffice WASM runtime. The current build is intentionally pinned to the
-Matbee package-classic `importScripts(soffice.js)` shape and the `load-v2`
+Matbee package-classic `importScripts(soffice.js)` shape and the `load-v3`
 native marker set so it can locate the deepest active browser `documentLoad`
 scope. It is not a production LibreOffice fork or a runtime distribution
 repository.
@@ -13,7 +13,7 @@ repository.
 - LibreOffice commit: `d1c9e0e4e1ddeb24fe8f93e56860b3765043f8b1`
 - Emscripten SDK: `3.1.74`
 - Diagnostic glue mode: `package-classic`
-- Diagnostic marker set: `load-v2`
+- Diagnostic marker set: `load-v3`
 - WASM compatibility patch: `patches/wasm-build-fixes.patch`
 - Package-classic glue patch: `patches/package-classic-glue.patch`
 - Native document-load trace patch: `patches/libreoffice-24-8-document-load-native-markers.patch`
@@ -68,9 +68,9 @@ fails. They include `build.log`, `config.log`, source revision, ccache stats,
 and runner disk usage when available.
 
 Before publishing, the build verifies that the final glue is not ES6, that
-`soffice.wasm` contains `LOK_LOAD_TRACE` and every required `load-v2` boundary,
+`soffice.wasm` contains `LOK_LOAD_TRACE` and every required `load-v3` boundary,
 and that it does not contain `LOK_SAVEAS_TRACE`. `BUILD-METADATA.txt` records
-`package-classic`, `load-v2`, and the pinned patch hashes.
+`package-classic`, `load-v3`, and the pinned patch hashes.
 
 ## Cache policy
 
@@ -94,9 +94,11 @@ Run exactly one known-hanging DOCX and collect Worker console lines containing:
 [LOK_LOAD_TRACE]
 ```
 
-Every new nested boundary is an RAII scope, so exceptions and ordinary returns
-produce a matching `exit`. The marker set brackets only top-level functions or
-single O(1)-per-load calls; it deliberately excludes DomainMapper per-element
+Function- and block-lifetime boundaries use RAII scopes. The two
+construction-only regions (`SfxModelGuard` and `SwWrtShell`) use paired explicit
+entry/exit emits so the marker lifetime does not extend beyond the intended
+construction. The marker set brackets only top-level functions or single
+O(1)-per-load calls; it deliberately excludes DomainMapper per-element
 probes, wait/yield/lock speculation, document content, URLs, filenames, filter
 options, UNO payloads, and save/export markers.
 
@@ -116,7 +118,20 @@ The ordered boundaries are:
 12. `WriterFilter::OOXMLDocument::resolve`
 13. `WriterFilter::pStream.clear`
 14. `SfxFrameLoader_Impl::impl_createDocumentView`
-15. `LibLODocument_Impl`
+15. `SfxBaseModel::createViewController`
+16. `SfxBaseModel::SfxModelGuard`
+17. `SfxBaseModel::FindOrCreateViewFrame_Impl`
+18. `SfxFrame::Create`
+19. `SfxFrame::PrepareForDoc_Impl`
+20. `SfxViewFrame::SfxViewFrame`
+21. `SfxViewFactory::CreateInstance`
+22. `SwView::SwWrtShell`
+23. `utl::ConnectFrameControllerModel`
+24. `utl::ConnectModelController`
+25. `XFrame::setComponent`
+26. `SfxBaseController::attachFrame`
+27. `SfxBaseController::ConnectSfxFrame_Impl`
+28. `LibLODocument_Impl`
 
 Use the deepest boundary with an `entry` and no matching `exit` only as a scope
 localizer:
@@ -135,7 +150,25 @@ localizer:
 | `resolve` entered without exit | OOXML parsing/mapping scope; not root-cause proof by itself |
 | `resolve` exited; stream clear absent | post-import grab-bag, theme, custom XML, or VBA handling |
 | stream clear entered without exit | stream/DomainMapper teardown, including `RemoveLastParagraph` |
-| import returned; view creation entered without exit | view, layout, or controller construction |
+| import returned; view creation entered without `createViewController` | call-site/UNO transition before model controller creation |
+| `createViewController` entered; model guard did not exit | SolarMutex acquisition plus model state/disposal checking; not SolarMutex root-cause proof |
+| model guard exited; frame lookup entered without exit | existing-frame scan or conditional frame/view-frame creation |
+| frame creation entered without exit | container-window lookup, `SfxFrame` construction, or frame-interface setup |
+| frame preparation entered without exit | model args, descriptor update, or hidden/plugin-mode preparation |
+| view-frame construction entered without exit | `SfxViewFrame` member construction, bindings, frame-view window, or work-window creation |
+| frame lookup exited; factory did not enter | registration setup or the short pre-dispatch interval; frame creation scopes may be absent on reuse |
+| factory entered; `SwWrtShell` did not enter | Writer factory dispatch or `SwView` base/member and pre-shell setup |
+| `SwWrtShell` entered without exit | `SwWrtShell` construction; not a unique layout, lock, scheduler, or callee proof |
+| `SwWrtShell` exited; factory did not exit | post-shell `SwView` setup, layout/field/TOX work, listeners, or render-state notification |
+| factory exited; `createViewController` did not exit | controller association/creation, arguments, plugin-mode setup, or guard release |
+| controller creation exited; frame/controller/model connection did not enter | call-site/UNO-reference transition between the two direct operations |
+| model/controller connection entered without exit | one grouped `attachModel`, `connectController`, or `setCurrentController` call |
+| model connection exited; component setup entered without exit | component-window retrieval or `XFrame::setComponent` |
+| component setup exited; `attachFrame` entered before Sfx connection | SolarMutex, frame listener handling, or pre-connect work; not SolarMutex root-cause proof |
+| Sfx connection entered without exit | dispatcher/window/UI activation, resize, view-data restore, or binding invalidation |
+| Sfx connection exited; `attachFrame` did not exit | info bars or `ViewCreated` event construction/notification |
+| `attachFrame` exited; frame/controller/model connection did not exit | optional modified-state re-enable or helper return handling |
+| all thirteen new scopes exit; outer view creation does not | controller reference/caller/UNO/WASM propagation after view creation |
 | all nested scopes return; outer LOK call does not | `LoadEnv` result/destruction, UNO return, or generated glue; do not blame Writer import |
 
 If every native boundary returns, move investigation to the generated WASM glue
