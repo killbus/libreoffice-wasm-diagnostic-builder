@@ -127,7 +127,18 @@ df -h "$PROJECT_DIR" "$WORK_ROOT" || true
 verify_sha256 "$PROJECT_DIR/autogen.input" "$AUTOGEN_INPUT_SHA256"
 verify_sha256 "$PROJECT_DIR/patches/wasm-build-fixes.patch" "$WASM_BUILD_FIXES_SHA256"
 verify_sha256 "$PROJECT_DIR/patches/package-classic-glue.patch" "$PACKAGE_CLASSIC_GLUE_SHA256"
-verify_sha256 "$PROJECT_DIR/patches/libreoffice-24-8-document-load-native-markers.patch" "$LOAD_MARKERS_SHA256"
+LOAD_MARKERS_PATCH="$PROJECT_DIR/patches/libreoffice-24-8-document-load-native-markers.patch"
+verify_sha256 "$LOAD_MARKERS_PATCH" "$LOAD_MARKERS_SHA256"
+if ! grep -Fq -- \
+  'diff --git a/include/vcl/lokwasmdocumentloaddiagnostic.hxx b/include/vcl/lokwasmdocumentloaddiagnostic.hxx' \
+  "$LOAD_MARKERS_PATCH" \
+  || ! grep -Fq -- '--- /dev/null' "$LOAD_MARKERS_PATCH" \
+  || ! grep -Fq -- '+++ b/include/vcl/lokwasmdocumentloaddiagnostic.hxx' "$LOAD_MARKERS_PATCH" \
+  || ! grep -Fq -- '+#define INCLUDED_VCL_LOKWASMDOCUMENTLOADDIAGNOSTIC_HXX' "$LOAD_MARKERS_PATCH" \
+  || ! grep -Fq -- '+                 "[LOK_LOAD_TRACE]' "$LOAD_MARKERS_PATCH"; then
+  echo "Native document-load marker patch does not create its diagnostic header" >&2
+  exit 1
+fi
 log "verified pinned build inputs"
 
 if [ ! -d "$EMSDK_DIR/.git" ]; then
@@ -170,8 +181,9 @@ patch --batch --forward -p1 < "$PROJECT_DIR/patches/wasm-build-fixes.patch"
 log "restoring package-classic importScripts glue"
 patch --batch --forward -p1 < "$PROJECT_DIR/patches/package-classic-glue.patch"
 log "applying native document-load markers"
-patch --batch --forward -p1 < "$PROJECT_DIR/patches/libreoffice-24-8-document-load-native-markers.patch"
-if ! grep -q 'LOK_LOAD_TRACE' include/vcl/lokwasmdocumentloaddiagnostic.hxx; then
+patch --batch --forward -p1 < "$LOAD_MARKERS_PATCH"
+if [ ! -f include/vcl/lokwasmdocumentloaddiagnostic.hxx ] \
+  || ! grep -q 'LOK_LOAD_TRACE' include/vcl/lokwasmdocumentloaddiagnostic.hxx; then
   echo "Native document-load marker verification failed" >&2
   exit 1
 fi

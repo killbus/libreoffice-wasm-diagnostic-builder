@@ -86,6 +86,73 @@ index 299b0fcd5..aab8055e7 100644
      static const sal_Int32 FILTERFLAG_TEMPLATEPATH  = 16;
  
      // SAFE ->
+diff --git a/include/vcl/lokwasmdocumentloaddiagnostic.hxx b/include/vcl/lokwasmdocumentloaddiagnostic.hxx
+new file mode 100644
+index 0000000..08c22f5
+--- /dev/null
++++ b/include/vcl/lokwasmdocumentloaddiagnostic.hxx
+@@ -0,0 +1,61 @@
++/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
++/*
++ * Diagnostic-only instrumentation for the browser-WASM document-load path.
++ * Do not include document content, URLs, filenames, filter options, or UNO data.
++ */
++
++#ifndef INCLUDED_VCL_LOKWASMDOCUMENTLOADDIAGNOSTIC_HXX
++#define INCLUDED_VCL_LOKWASMDOCUMENTLOADDIAGNOSTIC_HXX
++
++#include <chrono>
++#include <cstdio>
++
++namespace vcl::lok
++{
++inline void emitWasmDocumentLoadDiagnostic(const char* pBoundary, const char* pEvent,
++                                           const void* pObject) noexcept
++{
++#if defined(__EMSCRIPTEN__)
++    using Clock = std::chrono::steady_clock;
++    const auto nSteadyUs = std::chrono::duration_cast<std::chrono::microseconds>(
++                               Clock::now().time_since_epoch())
++                               .count();
++    std::fprintf(stderr,
++                 "[LOK_LOAD_TRACE] steady_us=%lld boundary=%s event=%s object=%p\n",
++                 static_cast<long long>(nSteadyUs), pBoundary, pEvent,
++                 const_cast<void*>(pObject));
++    std::fflush(stderr);
++#else
++    (void)pBoundary;
++    (void)pEvent;
++    (void)pObject;
++#endif
++}
++
++class WasmDocumentLoadDiagnosticScope final
++{
++public:
++    WasmDocumentLoadDiagnosticScope(const char* pBoundary, const void* pObject) noexcept
++        : mpBoundary(pBoundary)
++        , mpObject(pObject)
++    {
++        emitWasmDocumentLoadDiagnostic(mpBoundary, "entry", mpObject);
++    }
++
++    ~WasmDocumentLoadDiagnosticScope() noexcept
++    {
++        emitWasmDocumentLoadDiagnostic(mpBoundary, "exit", mpObject);
++    }
++
++    WasmDocumentLoadDiagnosticScope(const WasmDocumentLoadDiagnosticScope&) = delete;
++    WasmDocumentLoadDiagnosticScope& operator=(const WasmDocumentLoadDiagnosticScope&) = delete;
++
++private:
++    const char* mpBoundary;
++    const void* mpObject;
++};
++}
++
++#endif
++
++/* vim:set shiftwidth=4 softtabstop=4 expandtab: */
 diff --git a/include/unotools/fcm.hxx b/include/unotools/fcm.hxx
 index 6fd6b8283..c2db15efa 100644
 --- a/include/unotools/fcm.hxx
